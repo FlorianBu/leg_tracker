@@ -17,15 +17,21 @@ import math
 from scipy.optimize import linear_sum_assignment
 import scipy.stats
 import scipy.spatial
-from geometry_msgs.msg import PointStamped, Point
+from geometry_msgs.msg import PointStamped, Point, PoseStamped
 import tf
 import copy
 import timeit
 import message_filters
 import sys
 
+
+
 # External modules
 from pykalman import KalmanFilter # To install: http://pykalman.github.io/#installation
+
+enterloop = 1
+pose_x_old = 0.0
+pose_y_old = 0.0
 
 
 class DetectedCluster:
@@ -163,6 +169,7 @@ class KalmanMultiTracker:
         self.potential_leg_pairs = set()
         self.potential_leg_pair_initial_dist_travelled = {}
         self.people_tracked = []
+	self.people_follow = []
         self.prev_track_marker_id = 0
         self.prev_person_marker_id = 0
         self.prev_time = None
@@ -192,6 +199,7 @@ class KalmanMultiTracker:
 
     	# ROS publishers
         self.people_tracked_pub = rospy.Publisher('people_tracked', PersonArray, queue_size=300)
+	self.people_follow_pub = rospy.Publisher('people_follow', PoseStamped, queue_size=300)
         self.people_detected_pub = rospy.Publisher('people_detected', PersonArray, queue_size=300)
         self.marker_pub = rospy.Publisher('visualization_marker', Marker, queue_size=300)
         self.non_leg_clusters_pub = rospy.Publisher('non_leg_clusters', LegArray, queue_size=300)
@@ -500,6 +508,8 @@ class KalmanMultiTracker:
         """
         Publish markers of tracked objects to Rviz
         """
+	
+	
         # Make sure we can get the required transform first:
         if self.use_scan_header_stamp_for_tfs:
             tf_time = now            
@@ -605,10 +615,18 @@ class KalmanMultiTracker:
         """
         Publish markers of tracked people to Rviz and to <people_tracked> topic
         """        
+	
         people_tracked_msg = PersonArray()
         people_tracked_msg.header.stamp = now
-        people_tracked_msg.header.frame_id = self.publish_people_frame        
+        people_tracked_msg.header.frame_id = self.publish_people_frame
         marker_id = 0
+
+	#new
+	#people_follow_msg = PoseStamped()
+	#people_follow_msg.header.stamp = now
+        #people_follow_msg.header.frame_id = self.publish_people_frame
+
+
 
         # Make sure we can get the required transform first:
         if self.use_scan_header_stamp_for_tfs:
@@ -653,6 +671,38 @@ class KalmanMultiTracker:
                         new_person.pose.orientation.w = quaternion[3] 
                         new_person.id = person.id_num 
                         people_tracked_msg.people.append(new_person)
+
+
+			# publish to people_follow topic
+			global enterloop			
+			global pose_x_old
+			global pose_y_old
+
+			if person.id_num > 1:
+	                        new_person_follow = PoseStamped()
+				new_person_follow.header.stamp = now
+				new_person_follow.header.frame_id = self.publish_people_frame
+			        new_person_follow.pose.position.x = ps.point.x 
+			        new_person_follow.pose.position.y = ps.point.y 
+			        yaw = math.atan2(person.vel_y, person.vel_x)
+			        quaternion = tf.transformations.quaternion_from_euler(0, 0, yaw)
+			        new_person_follow.pose.orientation.x = quaternion[0]
+			        new_person_follow.pose.orientation.y = quaternion[1]
+			        new_person_follow.pose.orientation.z = quaternion[2]
+			        new_person_follow.pose.orientation.w = quaternion[3] 
+			        #new_person_follow.id = person.id_num 
+			        #people_follow_msg.append(new_person_follow)
+				#self.people_follow_pub.publish(people_follow_msg)
+				if(enterloop == 1 or abs(abs(pose_x_old) - abs(new_person_follow.pose.position.x)) > 1 or abs(abs(pose_y_old) - abs(new_person_follow.pose.position.y)) > 1):
+					self.people_follow_pub.publish(new_person_follow)
+					enterloop = 0
+					rospy.loginfo(enterloop)
+					pose_x_old=new_person_follow.pose.position.x
+					pose_y_old=new_person_follow.pose.position.y
+				
+					
+
+
 
                         # publish rviz markers       
                         # Cylinder for body 
@@ -754,7 +804,7 @@ class KalmanMultiTracker:
 
         # Publish people tracked message
         self.people_tracked_pub.publish(people_tracked_msg)            
-
+	#self.people_follow_pub.publish(people_follow_msg)
 
 if __name__ == '__main__':
     rospy.init_node('multi_person_tracker', anonymous=True)
